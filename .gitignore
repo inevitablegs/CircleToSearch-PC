@@ -21,3 +21,8 @@ Thumbs.db
 *.log
 *.tmp
 *.bak
+
+
+# LLM
+digest.txt
+req

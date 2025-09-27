@@ -8,7 +8,18 @@ import webbrowser
 import pyperclip
 import tempfile
 import time
+import io
 from urllib.parse import quote_plus
+
+# Selenium imports for direct image search
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.common.action_chains import ActionChains
 
 # PySide6 Imports
 from PySide6.QtWidgets import (
@@ -31,18 +42,28 @@ from overlay import OverlayWindow
 from side_panel import SidePanelWindow
 from PIL import Image
 
-# Enhanced Image Search Handler with File Saving
+# Enhanced Image Search Handler with DIRECT image upload
 class ImageSearchHandler:
-    """Handles enhanced image search with actual image upload and file saving"""
+    """Handles DIRECT image search with automatic upload to Google Images"""
     
     def __init__(self):
         self.temp_dir = tempfile.gettempdir()
         self.save_dir = self.create_save_directory()
+        self.driver = None
+        self.selenium_available = self._check_selenium()
+    
+    def _check_selenium(self):
+        """Check if Selenium is available"""
+        try:
+            from selenium import webdriver
+            return True
+        except ImportError:
+            print("[WARNING] Selenium not available - direct image search disabled")
+            return False
     
     def create_save_directory(self):
         """Create directory to save captured files"""
         try:
-            # Create save directory in user's Documents folder
             documents_path = os.path.join(os.path.expanduser("~"), "Documents")
             save_path = os.path.join(documents_path, "CircleToSearch_Captures")
             os.makedirs(save_path, exist_ok=True)
@@ -50,150 +71,293 @@ class ImageSearchHandler:
             return save_path
         except Exception as e:
             print(f"[ERROR] Could not create save directory: {e}")
-            # Fallback to desktop
             return os.path.join(os.path.expanduser("~"), "Desktop")
     
-    def save_capture_permanently(self, pil_image: Image.Image, ocr_text=""):
-        """Save captured image and text permanently with timestamp"""
+    def perform_direct_image_search(self, pil_image: Image.Image):
+        """DIRECT image upload to Google Images using Selenium automation"""
+        if not self.selenium_available:
+            print("[WARNING] Selenium not available, using fallback method")
+            return self._fallback_image_search(pil_image)
+        
         try:
-            from datetime import datetime
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            print("🚀 Starting DIRECT image search automation...")
             
-            # Save image
-            image_filename = f"capture_{timestamp}.jpg"
-            image_path = os.path.join(self.save_dir, image_filename)
+            # Save image to temporary file
+            temp_image_path = self._save_temp_image(pil_image)
+            print(f"📁 Temporary image saved: {temp_image_path}")
             
-            # Optimize and save image
-            img = pil_image.copy()
-            img.save(image_path, "JPEG", quality=95, optimize=True)
+            # Setup Chrome driver
+            if not self._setup_driver():
+                return self._fallback_image_search(pil_image)
             
-            # Save text file if there's OCR text
-            if ocr_text.strip():
-                text_filename = f"capture_{timestamp}.txt"
-                text_path = os.path.join(self.save_dir, text_filename)
+            # METHOD 1: Try direct Google Lens URL first (most reliable)
+            print("🔧 Attempting Method 1: Direct Google Lens upload...")
+            if self._try_direct_lens_upload(temp_image_path):
+                return True
+            
+            # METHOD 2: Try traditional Google Images flow
+            print("🔧 Attempting Method 2: Traditional Google Images...")
+            if self._try_google_images_upload(temp_image_path):
+                return True
+            
+            # METHOD 3: Last resort - use Google's upload endpoint directly
+            print("🔧 Attempting Method 3: Direct upload endpoint...")
+            if self._try_direct_upload_endpoint(temp_image_path):
+                return True
+            
+            # All methods failed
+            print("❌ All direct upload methods failed, using fallback...")
+            return self._fallback_image_search(pil_image)
                 
-                with open(text_path, 'w', encoding='utf-8') as f:
-                    f.write(f"Circle to Search Capture\n")
-                    f.write(f"Timestamp: {datetime.now().isoformat()}\n")
-                    f.write(f"Image File: {image_filename}\n")
-                    f.write(f"\n--- Recognized Text ---\n")
-                    f.write(ocr_text)
-                
-                print(f"[INFO] ✅ Saved: {image_path} and {text_path}")
-                return image_path, text_path
+        except Exception as e:
+            print(f"❌ Direct image search failed: {e}")
+            return self._fallback_image_search(pil_image)
+        finally:
+            # Cleanup temp file
+            if 'temp_image_path' in locals():
+                try:
+                    os.unlink(temp_image_path)
+                except:
+                    pass
+    
+    def _try_direct_lens_upload(self, image_path):
+        """Method 1: Use Google Lens directly (most reliable)"""
+        try:
+            print("🌐 Opening Google Lens...")
+            self.driver.get("https://lens.google.com/")
+            time.sleep(3)
+            
+            # Try to find the upload area
+            print("📤 Looking for upload area...")
+            upload_selectors = [
+                "input[type='file']",
+                "div[role='button'][aria-label*='image']",
+                "div[data-query*='upload']",
+                "button[aria-label*='image']"
+            ]
+            
+            for selector in upload_selectors:
+                try:
+                    file_inputs = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    for element in file_inputs:
+                        try:
+                            if element.tag_name.lower() == "input" and element.get_attribute("type") == "file":
+                                print("✅ Found file input, uploading image...")
+                                element.send_keys(image_path)
+                                print("🎉 Image uploaded to Google Lens!")
+                                return True
+                        except Exception as e:
+                            continue
+                except:
+                    continue
+            
+            # If no file input found, try clicking around
+            print("🔍 No direct file input found, trying interactive method...")
+            return self._try_interactive_upload(image_path)
+            
+        except Exception as e:
+            print(f"❌ Google Lens upload failed: {e}")
+            return False
+    
+    def _try_google_images_upload(self, image_path):
+        """Method 2: Traditional Google Images upload"""
+        try:
+            print("🌐 Opening Google Images...")
+            self.driver.get("https://images.google.com")
+            time.sleep(3)
+            
+            # Try to find and click the camera icon
+            print("📷 Looking for camera icon...")
+            camera_selectors = [
+                "div[aria-label*='Search by image']",
+                "div[role='button'][aria-label*='image']",
+                ".LM8x9c",
+                ".nDcEnd"
+            ]
+            
+            for selector in camera_selectors:
+                try:
+                    camera_btn = WebDriverWait(self.driver, 5).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                    )
+                    camera_btn.click()
+                    print("✅ Camera icon clicked!")
+                    time.sleep(2)
+                    break
+                except:
+                    continue
             else:
-                print(f"[INFO] ✅ Saved: {image_path}")
-                return image_path, None
+                print("❌ Could not find camera icon")
+                return False
+            
+            # Try to find file input after camera click
+            print("📤 Looking for file input after camera click...")
+            try:
+                file_input = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='file']"))
+                )
+                file_input.send_keys(image_path)
+                print("✅ Image uploaded via Google Images!")
+                return True
+            except TimeoutException:
+                print("❌ File input not found after camera click")
+                return False
                 
         except Exception as e:
-            print(f"[ERROR] Could not save capture: {e}")
-            return None, None
+            print(f"❌ Google Images upload failed: {e}")
+            return False
     
-    def perform_image_search(self, pil_image: Image.Image, engine='google'):
-        """Perform image search with actual image data"""
+    def _try_direct_upload_endpoint(self, image_path):
+        """Method 3: Use Google's direct upload endpoint"""
         try:
-            # Method 1: Save image to desktop for easy upload
-            desktop_path = self.save_to_desktop(pil_image)
+            print("🌐 Using direct upload endpoint...")
+            self.driver.get("https://www.google.com/searchbyimage/upload")
+            time.sleep(3)
             
-            # Method 2: Try to copy to clipboard (Windows)
-            clipboard_success = self.copy_to_clipboard_windows(pil_image)
+            # Look for file input on the upload page
+            try:
+                file_input = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='file']"))
+                )
+                file_input.send_keys(image_path)
+                print("✅ Image uploaded via direct endpoint!")
+                return True
+            except TimeoutException:
+                print("❌ No file input found on upload page")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Direct endpoint upload failed: {e}")
+            return False
+    
+    def _try_interactive_upload(self, image_path):
+        """Interactive method using JavaScript and click simulation"""
+        try:
+            # Use JavaScript to create a file input element
+            js_script = """
+            var input = document.createElement('input');
+            input.type = 'file';
+            input.id = 'auto-upload-input';
+            input.style.display = 'none';
+            document.body.appendChild(input);
+            """
+            self.driver.execute_script(js_script)
+            time.sleep(1)
             
-            # Method 3: Open Google (always use Google as requested)
-            search_url = "https://images.google.com/"
-            webbrowser.open(search_url)
-            instructions = "Click the camera icon 📷 to search by image"
+            # Find the created input and upload file
+            file_input = self.driver.find_element(By.ID, 'auto-upload-input')
+            file_input.send_keys(image_path)
+            time.sleep(2)
             
-            # Provide helpful feedback
-            print(f"[INFO] 🔍 Google Image Search opened!")
+            # Try to trigger form submission
+            submit_script = """
+            var input = document.getElementById('auto-upload-input');
+            var event = new Event('change', { bubbles: true });
+            input.dispatchEvent(event);
+            """
+            self.driver.execute_script(submit_script)
             
-            if clipboard_success:
-                print("✅ Image copied to clipboard - you can paste it directly!")
-            
-            if desktop_path:
-                print(f"✅ Image saved to: {desktop_path}")
-                print("   You can upload this file to Google Images")
-            
-            print(f"📖 {instructions}")
-            
+            print("✅ Interactive upload completed!")
             return True
             
         except Exception as e:
-            print(f"[ERROR] Image search failed: {e}")
+            print(f"❌ Interactive upload failed: {e}")
             return False
     
-    def save_to_desktop(self, pil_image: Image.Image):
-        """Save image to desktop for easy upload"""
+    def _setup_driver(self):
+        """Setup Chrome driver with options"""
         try:
+            chrome_options = webdriver.ChromeOptions()
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--start-maximized")
+            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            chrome_options.add_experimental_option('useAutomationExtension', False)
+            
+            # Remove automation detection
+            chrome_options.add_argument("--disable-blink-features")
+            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            
+            self.driver = webdriver.Chrome(
+                service=ChromeService(ChromeDriverManager().install()),
+                options=chrome_options
+            )
+            
+            # Remove webdriver property
+            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            self.driver.implicitly_wait(5)
+            return True
+            
+        except Exception as e:
+            print(f"❌ Chrome driver setup failed: {e}")
+            return False
+    
+    def _save_temp_image(self, pil_image: Image.Image):
+        """Save image to temporary file"""
+        temp_path = os.path.join(self.temp_dir, f"search_image_{int(time.time())}.jpg")
+        
+        # Optimize image
+        img = pil_image.copy()
+        max_size = (1200, 800)
+        if img.size[0] > max_size[0] or img.size[1] > max_size[1]:
+            img.thumbnail(max_size, Image.Resampling.LANCZOS)
+        
+        img.save(temp_path, "JPEG", quality=85)
+        return temp_path
+    
+    def _fallback_image_search(self, pil_image: Image.Image):
+        """Fallback method when direct upload fails"""
+        try:
+            # Save to desktop for manual upload
             desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
-            if not os.path.exists(desktop_path):
-                desktop_path = os.path.expanduser("~")
+            image_path = os.path.join(desktop_path, "search_image.jpg")
+            pil_image.save(image_path, "JPEG", quality=90)
             
-            image_path = os.path.join(desktop_path, "circle_search_image.jpg")
+            # Open Google Images with instructions
+            webbrowser.open("https://lens.google.com")
             
-            # Optimize image size
-            img = pil_image.copy()
-            max_size = (1920, 1080)
-            if img.size[0] > max_size[0] or img.size[1] > max_size[1]:
-                img.thumbnail(max_size, Image.Resampling.LANCZOS)
-            
-            img.save(image_path, "JPEG", quality=90, optimize=True)
-            return image_path
-            
-        except Exception as e:
-            print(f"[ERROR] Could not save to desktop: {e}")
-            return None
-    
-    def copy_to_clipboard_windows(self, pil_image: Image.Image):
-        """Copy image to Windows clipboard"""
-        try:
-            import io
-            import win32clipboard
-            
-            # Convert to bitmap format
-            output = io.BytesIO()
-            pil_image.convert("RGB").save(output, "BMP")
-            data = output.getvalue()[14:]  # Remove BMP header
-            output.close()
-            
-            # Copy to clipboard
-            win32clipboard.OpenClipboard()
-            win32clipboard.EmptyClipboard()
-            win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
-            win32clipboard.CloseClipboard()
+            print("📁 Image saved to desktop for manual upload:")
+            print(f"   📍 Location: {image_path}")
+            print("   🌐 Google Lens opened - drag and drop the image file")
+            print("   💡 Pro tip: Drag the image file from desktop to Google Lens page")
             
             return True
-            
-        except ImportError:
-            print("[INFO] win32clipboard not available")
-            return False
         except Exception as e:
-            print(f"[ERROR] Clipboard copy failed: {e}")
+            print(f"❌ Fallback method failed: {e}")
+            # Last resort - just open Google Lens
+            webbrowser.open("https://lens.google.com")
             return False
+    
+    def cleanup(self):
+        """Clean up browser driver"""
+        if self.driver:
+            try:
+                self.driver.quit()
+            except:
+                pass
 
-# Enhanced Search Engine with Google Focus
+# Enhanced Search Engine with DIRECT image search
 class EnhancedSearchEngine:
-    """Enhanced search engine with Google focus and proper image search"""
+    """Enhanced search engine with DIRECT image search capability"""
     
     def __init__(self):
         self.image_handler = ImageSearchHandler()
-        self.auto_search = True  # Auto search on Google by default
+        self.auto_search = True
     
     def search_text(self, query):
-        """Search text with Google (always use Google as requested)"""
+        """Search text with Google"""
         if not query.strip():
             return False
         
         try:
             clean_query = query.strip()
             encoded_query = quote_plus(clean_query)
-            
-            # Always use Google for text search
             url = f"https://www.google.com/search?q={encoded_query}"
-            
             webbrowser.open(url)
             print(f"[INFO] 🔍 Google text search: '{clean_query[:50]}{'...' if len(clean_query) > 50 else ''}'")
             return True
-            
         except Exception as e:
             print(f"[ERROR] Text search failed: {e}")
             return False
@@ -206,22 +370,19 @@ class EnhancedSearchEngine:
         try:
             clean_query = query.strip()
             encoded_query = quote_plus(clean_query)
-            
-            # Always use Google Images
             url = f"https://www.google.com/search?tbm=isch&q={encoded_query}"
-            
             webbrowser.open(url)
             print(f"[INFO] 🖼️ Google image search: '{clean_query[:50]}{'...' if len(clean_query) > 50 else ''}'")
             return True
-            
         except Exception as e:
             print(f"[ERROR] Image search by text failed: {e}")
             return False
     
     def search_image(self, pil_image=None):
-        """Perform reverse image search on Google"""
+        """Perform DIRECT reverse image search on Google"""
         if pil_image:
-            return self.image_handler.perform_image_search(pil_image, 'google')
+            print("🚀 Starting DIRECT image search...")
+            return self.image_handler.perform_direct_image_search(pil_image)
         else:
             print("[WARNING] No image provided for reverse search")
             return False
@@ -258,7 +419,6 @@ class GlobalHotkeyListener(QObject):
             
         try:
             self.active = True
-            # Start listener in a separate thread
             listener_thread = threading.Thread(target=self._run_listener, daemon=True)
             listener_thread.start()
             print("[INFO] ✅ Global hotkeys started: Ctrl+Shift+Space and Ctrl+Alt+S")
@@ -307,13 +467,11 @@ class FallbackHotkeyListener(QObject):
         """Start fallback method"""
         print("[INFO] ⚠️ Using fallback hotkey method - limited functionality")
         print("[INFO] Press F12 to activate capture instead")
-        # Create a visible widget for F12 key
         self.widget = QWidget()
         self.widget.setWindowTitle("Circle to Search - Press F12 to Capture")
         self.widget.setFixedSize(400, 100)
         self.widget.show()
         
-        # Add F12 shortcut to the widget
         from PySide6.QtGui import QShortcut, QKeySequence
         self.f12_shortcut = QShortcut(QKeySequence("F12"), self.widget)
         self.f12_shortcut.activated.connect(self._on_hotkey)
@@ -358,7 +516,7 @@ class SimpleOcrWorker(QThread):
             self.error.emit(f"OCR Error: {repr(e)}")
 
 class EnhancedSidePanel(QWidget):
-    """Enhanced side panel with Google-focused search"""
+    """Enhanced side panel with DIRECT image search"""
     
     def __init__(self):
         super().__init__()
@@ -431,8 +589,8 @@ class EnhancedSidePanel(QWidget):
         
         search_layout.addLayout(text_buttons_layout)
         
-        # Image search button (prominent)
-        self.image_search_btn = QPushButton("📷 Search Image on Google")
+        # DIRECT Image search button (prominent)
+        self.image_search_btn = QPushButton("🚀 DIRECT Image Search")
         self.image_search_btn.clicked.connect(self.search_image)
         self.image_search_btn.setStyleSheet(self.get_button_style("#2196F3"))
         self.image_search_btn.setFixedHeight(50)
@@ -518,9 +676,9 @@ class EnhancedSidePanel(QWidget):
         self.image_search_btn.setEnabled(has_image)
         
         if has_image:
-            self.image_search_btn.setText("📷 Search Image on Google ✨")
+            self.image_search_btn.setText("🚀 DIRECT Image Search ✨")
         else:
-            self.image_search_btn.setText("📷 No Image Available")
+            self.image_search_btn.setText("🚀 No Image Available")
     
     def search_text(self):
         """Search for text on Google"""
@@ -539,11 +697,12 @@ class EnhancedSidePanel(QWidget):
                 self.show_feedback("🖼️ Google Images opened!")
     
     def search_image(self):
-        """Perform reverse image search on Google"""
+        """Perform DIRECT reverse image search on Google"""
         if self.search_engine and self.current_image:
+            print("🚀 Starting DIRECT image search from panel...")
             success = self.search_engine.search_image(self.current_image)
             if success:
-                self.show_feedback("📷 Google Image search opened!")
+                self.show_feedback("🎉 DIRECT image search started!")
             else:
                 self.show_feedback("❌ Image search failed")
         else:
@@ -583,11 +742,8 @@ class EnhancedSidePanel(QWidget):
         """Show the panel"""
         if relative_rect:
             screen = QGuiApplication.primaryScreen().geometry()
-            
-            # Position to the right of selection
             panel_x = min(relative_rect.right() + 15, screen.width() - self.width())
             panel_y = max(0, min(relative_rect.top(), screen.height() - self.height()))
-            
             self.move(panel_x, panel_y)
         
         self.show()
@@ -595,7 +751,7 @@ class EnhancedSidePanel(QWidget):
         self.activateWindow()
 
 class DirectHotkeyApplication(QObject):
-    """Direct hotkey application without tray icon - overlay focused"""
+    """Direct hotkey application with DIRECT image search"""
     
     def __init__(self, app: QApplication):
         super().__init__()
@@ -624,38 +780,32 @@ class DirectHotkeyApplication(QObject):
 
     def setup_direct_hotkeys(self):
         """Setup direct keyboard shortcuts without tray icon"""
-        # Try global hotkey first
         if PYNPUT_AVAILABLE:
             self.hotkey_listener = GlobalHotkeyListener()
             success = self.hotkey_listener.start_listening()
         else:
             success = False
             
-        # Fallback if global hotkeys fail
         if not success:
             print("[WARNING] Global hotkeys failed, using fallback method")
             self.hotkey_listener = FallbackHotkeyListener()
             self.hotkey_listener.start_listening()
         
-        # Connect signals
         self.hotkey_listener.hotkey_pressed.connect(self.handle_show_overlay)
-        
         print("[INFO] ✅ Hotkey setup complete")
 
     def handle_show_overlay(self):
         """Show the capture overlay directly"""
         print("[DEBUG] 🎯 Showing overlay (direct hotkey)...")
-        print("[INFO] *** HOTKEY WORKING! *** Overlay should appear now...")
         try:
             self.overlay.show_overlay()
             print("[DEBUG] Overlay activated via hotkey")
         except Exception as e:
             print(f"[ERROR] Failed to show overlay: {e}")
-            # Show a simple message box as fallback
             QMessageBox.information(None, "Capture", "Hotkey activated! Click OK to capture screenshot manually.")
 
     def on_region_selected(self, rect: QRect):
-        """Handle region selection"""
+        """Handle region selection with DIRECT search"""
         print(f"[DEBUG] Region selected: {rect}")
         
         self.last_selection_rect = rect
@@ -692,39 +842,49 @@ class DirectHotkeyApplication(QObject):
             QMessageBox.warning(None, "Capture Error", f"Failed to capture screen: {e}")
 
     def handle_ocr_result(self, ocr_text):
-        """Handle OCR results"""
+        """Handle OCR results with DIRECT image search"""
         clean_text = ocr_text.strip()
         print(f"✅ OCR Result: {clean_text}")
         
-        # Auto-copy to clipboard (no saving)
+        # Auto-copy text to clipboard
         if clean_text:
             try:
                 pyperclip.copy(clean_text)
                 print("[INFO] Text copied to clipboard")
             except Exception as e:
-                print(f"[WARNING] Could not copy to clipboard: {e}")
+                print(f"[WARNING] Could not copy text: {e}")
         
-        # Direct browser search - no panel, no saving
+        # DIRECT search logic
         if clean_text:
-            print("[INFO] 🔍 Opening Google search directly...")
+            print("[INFO] 🔍 Performing automatic text search...")
             self.search_engine.search_text(clean_text)
             print(f"✅ Text Found: {clean_text[:40]}{'...' if len(clean_text) > 40 else ''}")
-            print(f"🔍 Google search opened directly!")
         else:
-            # If no text, open Google Images for reverse image search
+            # DIRECT image search when no text found
             if self.last_captured_image:
-                print("[INFO] 📷 No text found - opening Google Images for image search...")
-                self.search_engine.search_image(self.last_captured_image)
-                print(f"📷 Image Captured!")
-                print("📷 Google Images opened for reverse search!")
+                print("[INFO] 🚀 Performing AUTOMATIC DIRECT image search...")
+                success = self.search_engine.search_image(self.last_captured_image)
+                
+                if success:
+                    print("🎉 Automatic DIRECT image search completed!")
+                else:
+                    print("❌ Direct search failed, opening Google Lens...")
+                    webbrowser.open("https://lens.google.com")
+            else:
+                print("❌ No image available for search")
 
     def handle_ocr_error(self, error_message):
         """Handle OCR errors"""
         print(f"[ERROR] OCR failed: {error_message}")
         QMessageBox.warning(None, "OCR Error", f"Text recognition failed:\n{error_message}")
 
+    def cleanup(self):
+        """Cleanup resources"""
+        if hasattr(self.search_engine.image_handler, 'cleanup'):
+            self.search_engine.image_handler.cleanup()
+
 if __name__ == "__main__":
-    print("🚀 Starting Direct Hotkey Circle to Search (No Tray Icon)")
+    print("🚀 Starting Direct Hotkey Circle to Search with DIRECT Image Search")
     
     # Single instance lock
     lock_file = QLockFile(os.path.join(QDir.tempPath(), "circle-to-search-direct.lock"))
@@ -737,16 +897,20 @@ if __name__ == "__main__":
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("Circle to Search Direct")
 
-    # Create main controller (no tray icon)
+    # Create main controller
     main_controller = DirectHotkeyApplication(app)
 
     print("✨ Direct Hotkey Circle to Search is ready!")
     print("📖 How to use:")
     print("   🎯 Press Ctrl+Shift+Space OR Ctrl+Alt+S to capture")
     print("   🔍 Text automatically searches on Google!")
-    print("   📷 Images automatically open Google Images!")
+    print("   🚀 Images automatically perform DIRECT upload to Google Lens!")
     print("   📋 Text is auto-copied to clipboard")
     print("   ❌ Press Ctrl+C in terminal to quit")
+    
+    # Ensure cleanup on exit
+    import atexit
+    atexit.register(main_controller.cleanup)
 
     # Start the application
     sys.exit(app.exec())
