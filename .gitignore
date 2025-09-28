@@ -22,6 +22,9 @@ Thumbs.db
 *.tmp
 *.bak
 
+# build
+build/
+dist/
 
 # LLM
 digest.txt

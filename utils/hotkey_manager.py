@@ -1,13 +1,13 @@
 import threading
 import time
-from PySide6.QtCore import QObject, Signal, QTimer
+from PySide6.QtCore import QObject, Signal
 
 try:
     from pynput import keyboard
     PYNPUT_AVAILABLE = True
 except ImportError:
     PYNPUT_AVAILABLE = False
-    print("[WARNING] pynput not available, using fallback method")
+    print("[WARNING] pynput not available, hotkeys disabled")
 
 class GlobalHotkeyListener(QObject):
     """Global hotkey listener using pynput for system-wide shortcuts"""
@@ -31,7 +31,7 @@ class GlobalHotkeyListener(QObject):
             self.active = True
             listener_thread = threading.Thread(target=self._run_listener, daemon=True)
             listener_thread.start()
-            print("[INFO] ✅ Global hotkeys started: Ctrl+Shift+Space and Ctrl+Alt+S")
+            print("[INFO] ✅ Global hotkeys started: Ctrl+Shift+Space")
             return True
         except Exception as e:
             print(f"[ERROR] Failed to start global hotkeys: {e}")
@@ -42,7 +42,6 @@ class GlobalHotkeyListener(QObject):
         try:
             with keyboard.GlobalHotKeys({
                 '<ctrl>+<shift>+<space>': self._on_hotkey,
-                '<ctrl>+<alt>+s': self._on_hotkey
             }) as self.listener:
                 while self.active:
                     time.sleep(0.1)
@@ -64,42 +63,26 @@ class GlobalHotkeyListener(QObject):
             except:
                 pass
 
-class FallbackHotkeyListener(QObject):
-    """Fallback hotkey listener for when pynput is not available"""
-    hotkey_pressed = Signal()
-
-    def __init__(self):
-        super().__init__()
-        print("[INFO] ⚠️ Using fallback hotkey method - limited functionality")
-        print("[INFO] Press F12 to activate capture instead")
-
-    def start_listening(self):
-        """Start fallback method"""
-        return True
-    
-    def stop_listening(self):
-        """Stop fallback listening"""
-        pass
-
 class HotkeyManager(QObject):
-    """Manages hotkey functionality with fallback support"""
+    """Manages hotkey functionality"""
     
-    hotkey_pressed = Signal()  # Define the signal at class level
+    hotkey_pressed = Signal()
     
     def __init__(self):
         super().__init__()
         if PYNPUT_AVAILABLE:
             self.listener = GlobalHotkeyListener()
+            self.listener.hotkey_pressed.connect(self.hotkey_pressed)
         else:
-            self.listener = FallbackHotkeyListener()
-        
-        # Connect the listener's signal to our signal
-        self.listener.hotkey_pressed.connect(self.hotkey_pressed)
+            print("[WARNING] Hotkeys disabled - pynput not available")
     
     def start_listening(self):
         """Start hotkey listening"""
-        return self.listener.start_listening()
+        if PYNPUT_AVAILABLE:
+            return self.listener.start_listening()
+        return False
     
     def stop_listening(self):
         """Stop hotkey listening"""
-        self.listener.stop_listening()
+        if PYNPUT_AVAILABLE:
+            self.listener.stop_listening()
