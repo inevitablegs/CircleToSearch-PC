@@ -1,8 +1,6 @@
-# file: overlay.py (Radically Simplified for Debugging)
-
 from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt, QRect, QPoint, Signal
-from PySide6.QtGui import QPainter, QColor, QPen, QGuiApplication, QBrush
+from PySide6.QtGui import QPainter, QColor, QPen, QGuiApplication
 
 class OverlayWindow(QWidget):
     region_selected = Signal(QRect)
@@ -14,7 +12,6 @@ class OverlayWindow(QWidget):
             Qt.WindowStaysOnTopHint |
             Qt.Tool
         )
-        # This is important: We make the window background itself transparent
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_DeleteOnClose)
 
@@ -24,10 +21,8 @@ class OverlayWindow(QWidget):
 
     def show_overlay(self):
         """Shows the simplified overlay across all screens."""
-        # Get the total geometry of all screens
         desktop_geometry = self.get_desktop_geometry()
         self.setGeometry(desktop_geometry)
-        
         self.showFullScreen()
         self.activateWindow()
 
@@ -44,7 +39,7 @@ class OverlayWindow(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
 
         # 1. Draw a semi-transparent black overlay over the entire screen area.
-        overlay_color = QColor(0, 0, 0, 80) # Black with ~30% opacity
+        overlay_color = QColor(0, 0, 0, 80)
         painter.fillRect(self.rect(), overlay_color)
 
         # 2. If selecting, draw a border for the selection rectangle.
@@ -59,7 +54,6 @@ class OverlayWindow(QWidget):
             # Draw a white border around it
             pen = QPen(QColor("#FFFFFF"), 2, Qt.SolidLine)
             painter.setPen(pen)
-            # Use NoBrush so the inside is not filled
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(selection_rect)
 
