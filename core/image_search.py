@@ -19,9 +19,10 @@ class DirectImageSearchHandler:
     """Handles DIRECT image search with automatic upload to Google Images"""
     
     def __init__(self):
-        self.temp_dir = tempfile.gettempdir()
+        self.temp_dir = self._get_safe_temp_dir()
         self.driver = None
         self.selenium_available = self._check_selenium()
+        self.current_temp_files = []  # Track temp files to clean up on app exit
     
     def _check_selenium(self):
         """Check if Selenium is available"""
@@ -41,9 +42,16 @@ class DirectImageSearchHandler:
         try:
             print("🚀 Starting DIRECT image search automation...")
             
-            # Save image to temporary file
-            temp_image_path = self._save_temp_image(pil_image)
-            print(f"📁 Temporary image saved: {temp_image_path}")
+            # Save image to a persistent temporary file
+            temp_image_path = self._save_persistent_temp_image(pil_image)
+            print(f"📁 Persistent temporary image saved: {temp_image_path}")
+            
+            # Verify file exists and is accessible
+            if not os.path.exists(temp_image_path):
+                print("❌ Temp file was not created properly")
+                return self._fallback_image_search(pil_image)
+                
+            print(f"✅ File verification: {os.path.getsize(temp_image_path)} bytes")
             
             # Setup Chrome driver
             if not self._setup_driver():
@@ -73,14 +81,65 @@ class DirectImageSearchHandler:
                 
         except Exception as e:
             print(f"❌ Direct image search failed: {e}")
+            import traceback
+            traceback.print_exc()
             return self._fallback_image_search(pil_image)
-        finally:
-            # Cleanup temp file only - DON'T cleanup driver
-            if 'temp_image_path' in locals():
-                try:
-                    os.unlink(temp_image_path)
-                except:
-                    pass
+    
+    def _save_persistent_temp_image(self, pil_image: Image.Image):
+        """Save image to a persistent temp file that won't be deleted automatically"""
+        # Create a safe filename with timestamp
+        timestamp = int(time.time())
+        safe_filename = f"direct_search_image_{timestamp}.jpg"
+        
+        # Use user's Documents folder or Desktop for better accessibility
+        user_folder = os.path.expanduser("~")
+        possible_folders = [
+            os.path.join(user_folder, "Documents"),
+            os.path.join(user_folder, "Desktop"),
+            self.temp_dir
+        ]
+        
+        # Try to find a writable folder
+        for folder in possible_folders:
+            try:
+                if not os.path.exists(folder):
+                    continue
+                    
+                temp_path = os.path.join(folder, safe_filename)
+                
+                # Optimize and save image
+                img = pil_image.copy()
+                max_size = (1200, 800)
+                if img.size[0] > max_size[0] or img.size[1] > max_size[1]:
+                    img.thumbnail(max_size, Image.Resampling.LANCZOS)
+                
+                img.save(temp_path, "JPEG", quality=85)
+                print(f"💾 Saved image to: {temp_path}")
+                
+                # Add to cleanup list
+                self.current_temp_files.append(temp_path)
+                return temp_path
+                
+            except Exception as e:
+                print(f"⚠️ Could not save to {folder}: {e}")
+                continue
+        
+        # Fallback to traditional temp file
+        return self._save_fallback_temp_image(pil_image)
+    
+    def _save_fallback_temp_image(self, pil_image: Image.Image):
+        """Fallback method for saving temp image"""
+        temp_path = os.path.join(self.temp_dir, f"search_image_{int(time.time())}.jpg")
+        
+        # Optimize image
+        img = pil_image.copy()
+        max_size = (1200, 800)
+        if img.size[0] > max_size[0] or img.size[1] > max_size[1]:
+            img.thumbnail(max_size, Image.Resampling.LANCZOS)
+        
+        img.save(temp_path, "JPEG", quality=85)
+        self.current_temp_files.append(temp_path)
+        return temp_path
     
     def _try_direct_lens_upload(self, image_path):
         """Method 1: Use Google Lens directly (most reliable)"""
@@ -88,6 +147,13 @@ class DirectImageSearchHandler:
             print("🌐 Opening Google Lens...")
             self.driver.get("https://lens.google.com/")
             time.sleep(3)
+            
+            # Double-check file exists before uploading
+            if not os.path.exists(image_path):
+                print("❌ Image file disappeared before upload!")
+                return False
+                
+            print(f"📁 File ready for upload: {image_path} ({os.path.getsize(image_path)} bytes)")
             
             # Try to find the upload area
             print("📤 Looking for upload area...")
@@ -105,13 +171,23 @@ class DirectImageSearchHandler:
                         try:
                             if element.tag_name.lower() == "input" and element.get_attribute("type") == "file":
                                 print("✅ Found file input, uploading image...")
-                                element.send_keys(image_path)
+                                
+                                # Use absolute path to be safe
+                                absolute_path = os.path.abspath(image_path)
+                                print(f"📤 Uploading: {absolute_path}")
+                                
+                                element.send_keys(absolute_path)
+                                
+                                # Wait a moment for upload to complete
+                                time.sleep(2)
                                 print("🎉 Image uploaded to Google Lens!")
                                 print("📖 Browser will stay open - close it manually when done")
                                 return True
                         except Exception as e:
+                            print(f"⚠️ Failed with element {selector}: {e}")
                             continue
-                except:
+                except Exception as e:
+                    print(f"⚠️ Selector {selector} failed: {e}")
                     continue
             
             # If no file input found, try clicking around
@@ -120,6 +196,8 @@ class DirectImageSearchHandler:
             
         except Exception as e:
             print(f"❌ Google Lens upload failed: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def _try_google_images_upload(self, image_path):
@@ -128,6 +206,11 @@ class DirectImageSearchHandler:
             print("🌐 Opening Google Images...")
             self.driver.get("https://images.google.com")
             time.sleep(2)
+            
+            # Verify file still exists
+            if not os.path.exists(image_path):
+                print("❌ Image file disappeared before upload!")
+                return False
             
             # Try to find and click the camera icon
             print("📷 Looking for camera icon...")
@@ -156,16 +239,26 @@ class DirectImageSearchHandler:
             print("📤 Looking for file input after camera click...")
             try:
                 file_input = self.driver.find_element(By.CSS_SELECTOR, "input[type='file']")
-                file_input.send_keys(image_path)
+                
+                # Use absolute path
+                absolute_path = os.path.abspath(image_path)
+                print(f"📤 Uploading: {absolute_path}")
+                
+                file_input.send_keys(absolute_path)
+                
+                # Wait for upload
+                time.sleep(2)
                 print("✅ Image uploaded via Google Images!")
                 print("📖 Browser will stay open - close it manually when done")
                 return True
-            except:
-                print("❌ File input not found after camera click")
+            except Exception as e:
+                print(f"❌ File input not found after camera click: {e}")
                 return False
                 
         except Exception as e:
             print(f"❌ Google Images upload failed: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def _try_direct_upload_endpoint(self, image_path):
@@ -175,24 +268,42 @@ class DirectImageSearchHandler:
             self.driver.get("https://www.google.com/searchbyimage/upload")
             time.sleep(2)
             
+            # Verify file exists
+            if not os.path.exists(image_path):
+                print("❌ Image file disappeared before upload!")
+                return False
+            
             # Look for file input on the upload page
             try:
                 file_input = self.driver.find_element(By.CSS_SELECTOR, "input[type='file']")
-                file_input.send_keys(image_path)
+                
+                absolute_path = os.path.abspath(image_path)
+                print(f"📤 Uploading: {absolute_path}")
+                
+                file_input.send_keys(absolute_path)
+                
+                time.sleep(2)
                 print("✅ Image uploaded via direct endpoint!")
                 print("📖 Browser will stay open - close it manually when done")
                 return True
-            except:
-                print("❌ No file input found on upload page")
+            except Exception as e:
+                print(f"❌ No file input found on upload page: {e}")
                 return False
                 
         except Exception as e:
             print(f"❌ Direct endpoint upload failed: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def _try_interactive_upload(self, image_path):
         """Interactive method using JavaScript and click simulation"""
         try:
+            # Verify file exists
+            if not os.path.exists(image_path):
+                print("❌ Image file disappeared before upload!")
+                return False
+            
             # Use JavaScript to create a file input element
             js_script = """
             var input = document.createElement('input');
@@ -206,7 +317,11 @@ class DirectImageSearchHandler:
             
             # Find the created input and upload file
             file_input = self.driver.find_element(By.ID, 'auto-upload-input')
-            file_input.send_keys(image_path)
+            
+            absolute_path = os.path.abspath(image_path)
+            print(f"📤 Uploading via JS: {absolute_path}")
+            
+            file_input.send_keys(absolute_path)
             time.sleep(2)
             
             # Try to trigger form submission
@@ -223,6 +338,8 @@ class DirectImageSearchHandler:
             
         except Exception as e:
             print(f"❌ Interactive upload failed: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def _setup_driver(self):
@@ -261,32 +378,22 @@ class DirectImageSearchHandler:
     def _get_safe_temp_dir(self):
         """Get a safe temp directory that works in .exe"""
         if getattr(sys, 'frozen', False):
-            # Running as .exe - use user's temp directory
-            return os.path.join(os.path.expanduser("~"), "AppData", "Local", "Temp")
+            # Running as .exe - use user's temp directory that's accessible
+            return os.path.join(os.path.expanduser("~"), "AppData", "Local", "Temp", "DirectSearch")
         else:
             # Running as script
             return tempfile.gettempdir()
-        
-    def _save_temp_image(self, pil_image: Image.Image):
-        """Save image to temporary file"""
-        temp_dir = self._get_safe_temp_dir()
-        temp_path = os.path.join(temp_dir, f"search_image_{int(time.time())}.jpg")
-        
-        # Optimize image
-        img = pil_image.copy()
-        max_size = (1200, 800)
-        if img.size[0] > max_size[0] or img.size[1] > max_size[1]:
-            img.thumbnail(max_size, Image.Resampling.LANCZOS)
-        
-        img.save(temp_path, "JPEG", quality=85)
-        return temp_path
     
     def _fallback_image_search(self, pil_image: Image.Image):
         """Fallback method when direct upload fails"""
         try:
-            # Save to temp for manual upload
-            temp_dir = self._get_safe_temp_dir()
-            image_path = os.path.join(temp_dir, "search_image.jpg")
+            # Save to user's Documents folder for better accessibility
+            user_folder = os.path.expanduser("~")
+            save_folder = os.path.join(user_folder, "Documents")
+            if not os.path.exists(save_folder):
+                save_folder = user_folder
+                
+            image_path = os.path.join(save_folder, "direct_search_image.jpg")
             pil_image.save(image_path, "JPEG", quality=90)
             
             # Open Google Lens with instructions
@@ -305,7 +412,8 @@ class DirectImageSearchHandler:
             return False
     
     def cleanup(self):
-        """Clean up browser driver - ONLY called when app exits"""
+        """Clean up browser driver and temp files - ONLY called when app exits"""
+        # Clean up browser
         if self.driver:
             try:
                 self.driver.quit()
@@ -313,3 +421,12 @@ class DirectImageSearchHandler:
                 print("[INFO] Browser driver cleaned up")
             except:
                 pass
+        
+        # Clean up temp files (optional - comment out if you want files to persist)
+        for temp_file in self.current_temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.unlink(temp_file)
+                    print(f"[INFO] Cleaned up temp file: {temp_file}")
+            except:
+                print(f"[WARNING] Could not delete temp file: {temp_file}")

@@ -4,6 +4,7 @@ from PySide6.QtGui import QPainter, QColor, QPen, QGuiApplication
 
 class OverlayWindow(QWidget):
     region_selected = Signal(QRect)
+    overlay_closed = Signal()  # New signal for when overlay closes
 
     def __init__(self):
         super().__init__()
@@ -76,8 +77,16 @@ class OverlayWindow(QWidget):
             
             if selection_rect.width() > 5 and selection_rect.height() > 5:
                 self.region_selected.emit(selection_rect)
+            else:
+                self.overlay_closed.emit()  # Emit if no selection made
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
             self.is_selecting = False
             self.hide()
+            self.overlay_closed.emit()  # Emit when escape pressed
+
+    def hideEvent(self, event):
+        """Emit signal when overlay is hidden"""
+        self.overlay_closed.emit()
+        super().hideEvent(event)

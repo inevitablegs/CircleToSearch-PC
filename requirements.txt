@@ -25,3 +25,6 @@ pynput>=1.7.6
 
 # Optional: Windows clipboard support (if pyperclip fails)
 # pywin32>=306; sys_platform == 'win32'
+
+psutil>=5.9.0
+pywin32>=306

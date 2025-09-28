@@ -1,138 +1,222 @@
 import sys
 import os
 import atexit
+import time
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PySide6.QtGui import QIcon, QAction, QPixmap, QPainter
-from PySide6.QtCore import QLockFile, QDir, Qt, QPoint
+from PySide6.QtCore import QLockFile, QDir, Qt, QPoint, QTimer
 
 class DirectSearchApplication:
-    """Main application controller with system tray"""
+    """Optimized main application with pre-load mode for instant activation"""
     
-    def __init__(self, app: QApplication, start_minimized=False):
+    def __init__(self, app: QApplication, single_use_mode=False, preload_mode=False):
         self.app = app
-        print("[DEBUG] Initializing Direct Search Application...")
-        
-        # Set up system tray
-        self.setup_system_tray()
-        
-        # Initialize core components as None (lazy loading)
-        self.search_engine = None
+        self.single_use_mode = single_use_mode
+        self.preload_mode = preload_mode
         self.overlay = None
-        self.hotkey_manager = None
+        self.search_engine = None
         
-        # Start minimal hotkey listener (lightweight)
-        self.setup_minimal_hotkey_manager()
+        print(f"[DEBUG] Starting Direct Search Application... Mode: {'Preload' if preload_mode else 'Single-use' if single_use_mode else 'Legacy'}")
         
-        if not start_minimized:
-            self.show_notification("Direct Search", "Application started! Press Ctrl+Shift+Space to capture.")
-        
-        print("[DEBUG] Direct Search Application initialized in low-memory mode!")
-
-    def setup_minimal_hotkey_manager(self):
-        """Setup minimal hotkey manager without loading heavy dependencies"""
+        if preload_mode:
+            # Pre-load mode: initialize in background, wait for activation
+            self.setup_preload_mode()
+        elif single_use_mode:
+            # Single-use mode: show overlay immediately
+            self.setup_direct_mode()
+        else:
+            # Legacy mode with system tray
+            self.setup_system_tray()
+            self.setup_components()
+    
+    def setup_preload_mode(self):
+        """Setup for pre-load mode - minimal initialization"""
         try:
-            from utils.hotkey_manager import HotkeyManager
-            self.hotkey_manager = HotkeyManager()
-            self.hotkey_manager.hotkey_pressed.connect(self.handle_show_overlay)
-            self.hotkey_manager.start_listening()
-            print("[INFO] Minimal hotkey manager started")
+            # Only import heavy modules when needed
+            print("💤 Pre-load mode: Waiting for activation...")
+            
+            # Set up system tray to indicate ready state
+            self.setup_minimal_tray()
+            
+            # Initialize core components but don't load heavy resources yet
+            self.initialize_light_components()
+            
         except Exception as e:
-            print(f"[WARNING] Failed to setup hotkey manager: {e}")
-
-    def lazy_load_components(self):
-        """Lazy load heavy components only when needed"""
-        if self.search_engine is None:
-            print("[DEBUG] 🚀 Lazy loading core components...")
-            try:
-                from core.direct_search_engine import DirectSearchEngine
+            print(f"[ERROR] Failed to setup preload mode: {e}")
+    
+    def setup_minimal_tray(self):
+        """Setup minimal system tray for pre-load mode"""
+        self.tray_icon = QSystemTrayIcon()
+        self.tray_icon.setIcon(self.create_default_icon())
+        
+        tray_menu = QMenu()
+        activate_action = QAction("🚀 Activate Overlay", self.app)
+        activate_action.triggered.connect(self.activate_from_tray)
+        tray_menu.addAction(activate_action)
+        
+        exit_action = QAction("❌ Exit", self.app)
+        exit_action.triggered.connect(self.cleanup_and_exit)
+        tray_menu.addAction(exit_action)
+        
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.setToolTip("Direct Search (Ready - Press Ctrl+Shift+Space)")
+        self.tray_icon.show()
+    
+    def initialize_light_components(self):
+        """Initialize only light components in pre-load mode"""
+        # Import and create overlay (light component)
+        from overlay import OverlayWindow
+        self.overlay = OverlayWindow()
+        self.overlay.region_selected.connect(self.on_region_selected)
+        self.overlay.overlay_closed.connect(self.on_overlay_closed)
+    
+    def activate_from_tray(self):
+        """Activate overlay from tray menu"""
+        self.show_overlay_instantly()
+    
+    def show_overlay_instantly(self):
+        """Show overlay instantly (for pre-load mode)"""
+        try:
+            if not self.overlay:
                 from overlay import OverlayWindow
-                
-                self.search_engine = DirectSearchEngine()
                 self.overlay = OverlayWindow()
-                
-                # Connect signals
                 self.overlay.region_selected.connect(self.on_region_selected)
-                print("[DEBUG] Core components loaded successfully")
-            except Exception as e:
-                print(f"[ERROR] Failed to load core components: {e}")
-                return False
-        return True
+                self.overlay.overlay_closed.connect(self.on_overlay_closed)
+            
+            print("🎯 Showing overlay instantly...")
+            self.overlay.show_overlay()
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to show overlay: {e}")
+    
+    def setup_direct_mode(self):
+        """Optimized setup for single-use mode"""
+        try:
+            # Lazy import heavy modules
+            from overlay import OverlayWindow
+            
+            print("⚡ Fast startup: Initializing overlay only...")
+            
+            # Create overlay immediately (light component)
+            self.overlay = OverlayWindow()
+            self.overlay.region_selected.connect(self.on_region_selected)
+            self.overlay.overlay_closed.connect(self.on_overlay_closed)
+            
+            # Show overlay instantly
+            print("🎯 Showing overlay...")
+            self.overlay.show_overlay()
+            
+            # Load search engine in background after overlay is shown
+            QTimer.singleShot(100, self.initialize_search_engine)
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to setup direct mode: {e}")
+            self.cleanup_and_exit()
+    
+    def initialize_search_engine(self):
+        """Initialize search engine in background"""
+        try:
+            from core.direct_search_engine import DirectSearchEngine
+            self.search_engine = DirectSearchEngine()
+            print("✅ Search engine initialized in background")
+        except Exception as e:
+            print(f"[WARNING] Search engine initialization delayed: {e}")
+
+    def on_region_selected(self, rect):
+        """Handle region selection with optimized loading"""
+        print(f"[DEBUG] Region selected: {rect}")
+        
+        # Ensure search engine is initialized
+        if not self.search_engine:
+            from core.direct_search_engine import DirectSearchEngine
+            self.search_engine = DirectSearchEngine()
+        
+        if hasattr(self, 'search_engine'):
+            self.search_engine.process_selection(rect)
+            
+            # In single-use mode, wait a bit then exit
+            if self.single_use_mode:
+                print("⏳ Search completed, app will close shortly...")
+                QTimer.singleShot(2000, self.cleanup_and_exit)
+
+    def on_overlay_closed(self):
+        """Handle overlay closed without selection"""
+        if self.single_use_mode:
+            print("👋 Overlay closed without selection")
+            self.cleanup_and_exit()
+        elif self.preload_mode:
+            print("💤 Returning to pre-load mode...")
+            # Stay running in pre-load mode
 
     def create_default_icon(self):
-        """Create a default icon programmatically if no icon file exists"""
+        """Create default icon (for legacy mode)"""
         pixmap = QPixmap(64, 64)
         pixmap.fill(Qt.transparent)
         
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing)
-        
-        # Draw a simple search icon (magnifying glass)
         painter.setBrush(Qt.blue)
         painter.setPen(Qt.darkBlue)
-        painter.drawEllipse(8, 8, 48, 48)  # Outer circle
-        
+        painter.drawEllipse(8, 8, 48, 48)
         painter.setBrush(Qt.white)
-        painter.drawEllipse(16, 16, 32, 32)  # Inner circle
-        
-        # Draw handle (simplified - just a rectangle)
+        painter.drawEllipse(16, 16, 32, 32)
         painter.setBrush(Qt.blue)
-        painter.drawRect(40, 40, 20, 8)  # Simple handle
-        
+        painter.drawRect(40, 40, 20, 8)
         painter.end()
         return QIcon(pixmap)
 
     def setup_system_tray(self):
-        """Setup system tray icon and menu"""
-        # Create tray icon
+        """Setup system tray (legacy mode only)"""
         self.tray_icon = QSystemTrayIcon()
         
-        # Try to load custom icon, fallback to default
         icon_path = self.get_icon_path()
         if os.path.exists(icon_path):
             self.tray_icon.setIcon(QIcon(icon_path))
-            print(f"[INFO] Loaded icon from: {icon_path}")
         else:
-            # Create a default icon programmatically
-            print("[INFO] No icon file found, creating default icon")
-            default_icon = self.create_default_icon()
-            self.tray_icon.setIcon(default_icon)
+            self.tray_icon.setIcon(self.create_default_icon())
         
-        # Create context menu
         tray_menu = QMenu()
-        
-        # Show overlay action
         show_action = QAction("📷 Capture Screen", self.app)
         show_action.triggered.connect(self.handle_show_overlay)
         tray_menu.addAction(show_action)
-        
-        # Separator
         tray_menu.addSeparator()
-        
-        # Exit action
         exit_action = QAction("❌ Exit", self.app)
         exit_action.triggered.connect(self.cleanup_and_exit)
         tray_menu.addAction(exit_action)
         
         self.tray_icon.setContextMenu(tray_menu)
         self.tray_icon.setToolTip("Direct Search\nPress Ctrl+Shift+Space to capture")
-        self.tray_icon.activated.connect(self.on_tray_activated)
         self.tray_icon.show()
 
+    def setup_components(self):
+        """Setup core components (for legacy mode)"""
+        try:
+            from core.direct_search_engine import DirectSearchEngine
+            from overlay import OverlayWindow
+            from utils.hotkey_manager import HotkeyManager
+
+            self.search_engine = DirectSearchEngine()
+            self.overlay = OverlayWindow()
+            self.hotkey_manager = HotkeyManager()
+
+            # Connect signals
+            self.overlay.region_selected.connect(self.on_region_selected)
+            self.hotkey_manager.hotkey_pressed.connect(self.handle_show_overlay)
+
+            # Start hotkey listener
+            self.hotkey_manager.start_listening()
+        except:
+            pass
+
     def get_icon_path(self):
-        """Get path to application icon"""
-        # Check multiple possible locations
+        """Get icon path"""
         possible_paths = [
-            # Development paths
             os.path.join(os.path.dirname(__file__), 'assets', 'tray_icon.ico'),
             os.path.join(os.path.dirname(__file__), 'assets', 'icon.ico'),
             os.path.join(os.path.dirname(__file__), 'tray_icon.ico'),
             os.path.join(os.path.dirname(__file__), 'icon.ico'),
-            # For PyInstaller - look in the same directory as executable
-            os.path.join(os.path.dirname(sys.executable), 'tray_icon.ico'),
-            os.path.join(os.path.dirname(sys.executable), 'icon.ico'),
         ]
         
-        # For PyInstaller bundled app
         if getattr(sys, 'frozen', False):
             base_path = sys._MEIPASS
             possible_paths.extend([
@@ -145,40 +229,15 @@ class DirectSearchApplication:
         for path in possible_paths:
             if os.path.exists(path):
                 return path
-        
         return ""
 
-    def on_tray_activated(self, reason):
-        """Handle tray icon clicks"""
-        if reason == QSystemTrayIcon.DoubleClick:
-            self.handle_show_overlay()
-
-    def show_notification(self, title, message):
-        """Show system tray notification"""
-        self.tray_icon.showMessage(title, message, QSystemTrayIcon.Information, 3000)
-
     def handle_show_overlay(self):
-        """Show the capture overlay with lazy loading"""
-        print("[DEBUG] 🎯 Activating overlay with lazy loading...")
+        """Show overlay (legacy mode only)"""
         try:
-            # Lazy load components first
-            if not self.lazy_load_components():
-                self.show_notification("Error", "Failed to load application components")
-                return
-                
-            self.overlay.show_overlay()
-            print("[DEBUG] Overlay activated")
+            if hasattr(self, 'overlay'):
+                self.overlay.show_overlay()
         except Exception as e:
             print(f"[ERROR] Failed to show overlay: {e}")
-            self.show_notification("Error", "Failed to show overlay")
-
-    def on_region_selected(self, rect):
-        """Handle region selection with direct search"""
-        print(f"[DEBUG] Region selected: {rect}")
-        if self.search_engine:
-            self.search_engine.process_selection(rect)
-        else:
-            print("[ERROR] Search engine not initialized")
 
     def cleanup_and_exit(self):
         """Cleanup and exit application"""
@@ -187,49 +246,44 @@ class DirectSearchApplication:
 
     def cleanup(self):
         """Cleanup resources"""
-        if self.search_engine:
+        if hasattr(self, 'search_engine'):
             self.search_engine.cleanup()
-        if self.hotkey_manager:
-            self.hotkey_manager.stop_listening()
 
-
-# Follwing code is for develoment phase - inevitablegs
-
-"""         
 def main():
-    print("🚀 Starting Direct Search Application (Lazy Load Mode)")
+    print("🚀 Direct Search Application - Optimized")
     
-    # Single instance lock
-    lock_file = QLockFile(os.path.join(QDir.tempPath(), "direct-search-app.lock"))
-    if not lock_file.tryLock(100):
-        print("[ERROR] Another instance is already running.")
-        sys.exit(0)
+    # Check running mode
+    single_use = "--single-use" in sys.argv
+    preload_mode = "--preload" in sys.argv
     
-    # Check for minimized start
-    start_minimized = "--minimized" in sys.argv or "/minimized" in sys.argv
-    
-    # Create application
-    app = QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(False)
-    app.setApplicationName("Direct Search")
-    app.setApplicationDisplayName("Direct Search")
-
-    # Create main controller with lazy loading
-    main_controller = DirectSearchApplication(app, start_minimized=start_minimized)
-
-    print("✨ Direct Search Application is ready!")
-    print("📖 Running in background with minimal memory...")
-    print("   🎯 Press Ctrl+Shift+Space to capture")
-    print("   📌 Double-click tray icon to capture") 
-    print("   ❌ Right-click tray icon to exit")
-    print("   💾 Memory: Lightweight mode (heavy components load on demand)")
-    
-    # Ensure cleanup on exit
-    atexit.register(main_controller.cleanup)
-
-    # Start the application
-    sys.exit(app.exec())
+    if preload_mode:
+        print("[INFO] Running in pre-load mode (always ready)")
+        # No lock file for pre-load mode
+        app = QApplication(sys.argv)
+        app.setQuitOnLastWindowClosed(False)
+        main_controller = DirectSearchApplication(app, preload_mode=True)
+        atexit.register(main_controller.cleanup)
+        sys.exit(app.exec())
+    elif single_use:
+        print("[INFO] Running in optimized single-use mode")
+        # No lock file for single-use mode
+        app = QApplication(sys.argv)
+        main_controller = DirectSearchApplication(app, single_use_mode=True)
+        atexit.register(main_controller.cleanup)
+        sys.exit(app.exec())
+    else:
+        # Legacy mode with system tray
+        print("[INFO] Running in legacy system tray mode")
+        lock_file = QLockFile(os.path.join(QDir.tempPath(), "direct-search-app.lock"))
+        if not lock_file.tryLock(100):
+            print("[ERROR] Another instance is already running.")
+            sys.exit(0)
+        
+        app = QApplication(sys.argv)
+        app.setQuitOnLastWindowClosed(False)
+        main_controller = DirectSearchApplication(app, single_use_mode=False)
+        atexit.register(main_controller.cleanup)
+        sys.exit(app.exec())
 
 if __name__ == "__main__":
     main()
-"""

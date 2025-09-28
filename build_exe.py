@@ -2,7 +2,7 @@ import PyInstaller.__main__
 import os
 import shutil
 
-def build_executable():
+def build_executables():
     # Clean previous builds
     if os.path.exists('dist'):
         shutil.rmtree('dist')
@@ -23,7 +23,9 @@ def build_executable():
             icon_path = path
             break
     
-    pyinstaller_args = [
+    # Build main application
+    print("🔨 Building Main Application...")
+    main_app_args = [
         'main.py',
         '--name=DirectSearch',
         '--onefile',
@@ -46,17 +48,32 @@ def build_executable():
         '--noconfirm',
     ]
     
-    # Add icon if found
     if icon_path:
-        pyinstaller_args.append(f'--icon={icon_path}')
-        print(f"[INFO] Using icon: {icon_path}")
-    else:
-        print("[WARNING] No icon file found, using default")
+        main_app_args.append(f'--icon={icon_path}')
     
-    # Remove empty arguments
-    pyinstaller_args = [arg for arg in pyinstaller_args if arg]
+    PyInstaller.__main__.run([arg for arg in main_app_args if arg])
     
-    PyInstaller.__main__.run(pyinstaller_args)
+    # Build launcher
+    print("🔨 Building Launcher...")
+    launcher_args = [
+        'launcher.py',
+        '--name=DirectSearchLauncher',
+        '--onefile',
+        '--console',  # Keep console for debugging
+        '--hidden-import=pynput',
+        '--clean',
+        '--noconfirm',
+    ]
+    
+    if icon_path:
+        launcher_args.append(f'--icon={icon_path}')
+    
+    PyInstaller.__main__.run([arg for arg in launcher_args if arg])
+    
+    print("✅ Build completed!")
+    print("📁 Files created:")
+    print("   - dist/DirectSearch.exe (Main application)")
+    print("   - dist/DirectSearchLauncher.exe (Lightweight launcher)")
 
 if __name__ == "__main__":
-    build_executable()
+    build_executables()

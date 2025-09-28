@@ -37,20 +37,19 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "startmenu"; Description: "Create Start Menu shortcut"; GroupDescription: "Shortcuts"; Flags: unchecked
-Name: "autostart"; Description: "Start with Windows"; GroupDescription: "Startup"; Flags: unchecked
+Name: "autostart"; Description: "Start with Windows (Recommended)"; GroupDescription: "Startup"; Flags: checked
 
 [Files]
 Source: "dist\DirectSearch.exe"; DestDir: "{app}"; Flags: ignoreversion
-; NOTE: Don't use "Flags: ignoreversion" on any shared system files
+Source: "dist\DirectSearchLauncher.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: autostart
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\DirectSearchLauncher.exe"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\DirectSearchLauncher.exe"; Tasks: desktopicon
+Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\DirectSearchLauncher.exe"; Tasks: autostart
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
-
+Filename: "{app}\DirectSearchLauncher.exe"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 [Registry]
 ; Register hotkey (this runs the app minimized)
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "DirectSearch"; ValueData: """{app}\{#MyAppExeName}"" --minimized"; Flags: uninsdeletevalue
