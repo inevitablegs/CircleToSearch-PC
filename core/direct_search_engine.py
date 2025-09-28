@@ -41,9 +41,19 @@ class DirectSearchEngine:
     """Main search engine handling both text and direct image search"""
     
     def __init__(self):
-        self.ocr_processor = OCRProcessor()
-        self.image_handler = DirectImageSearchHandler()
+        self.ocr_processor = None  # Lazy initialization
+        self.image_handler = None  # Lazy initialization
         self.current_worker = None
+
+    def _initialize_ocr(self):
+        """Initialize OCR processor only when needed"""
+        if self.ocr_processor is None:
+            self.ocr_processor = OCRProcessor()
+
+    def _initialize_image_handler(self):
+        """Initialize image handler only when needed"""
+        if self.image_handler is None:
+            self.image_handler = DirectImageSearchHandler()
 
     def capture_region(self, rect: QRect):
         """Capture screen region and return PIL Image"""
@@ -77,6 +87,9 @@ class DirectSearchEngine:
             print("[ERROR] Failed to capture region")
             return
 
+        # Initialize OCR only when needed
+        self._initialize_ocr()
+        
         # Perform OCR
         ocr_text = self.ocr_processor.extract_text(captured_image)
         
@@ -94,6 +107,8 @@ class DirectSearchEngine:
             self._start_search_worker(rect, text=ocr_text.strip())
         else:
             print("[INFO] 🚀 Performing direct image search...")
+            # Initialize image handler only when needed
+            self._initialize_image_handler()
             self._start_search_worker(rect, image=captured_image)
 
     def _start_search_worker(self, rect, image=None, text=None):
@@ -139,8 +154,12 @@ class DirectSearchEngine:
             return False
 
     def cleanup(self):
-        """Cleanup resources"""
-        self.image_handler.cleanup()
+        """Cleanup resources and free memory - ONLY on app exit"""
+        if self.ocr_processor:
+            self.ocr_processor.cleanup()
+        # Don't cleanup image_handler here - let browser stay open
+        # if self.image_handler:
+        #     self.image_handler.cleanup()
         if self.current_worker and self.current_worker.isRunning():
             self.current_worker.quit()
             self.current_worker.wait()

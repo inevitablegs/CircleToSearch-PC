@@ -33,7 +33,7 @@ class DirectImageSearchHandler:
             return False
     
     def perform_direct_image_search(self, pil_image: Image.Image):
-        """DIRECT image upload to Google Images using Selenium automation"""
+        """DIRECT image upload to Google Images using Selenium automation - BROWSER STAYS OPEN"""
         if not self.selenium_available:
             print("[WARNING] Selenium not available, using fallback method")
             return self._fallback_image_search(pil_image)
@@ -52,16 +52,19 @@ class DirectImageSearchHandler:
             # METHOD 1: Try direct Google Lens URL first (most reliable)
             print("🔧 Attempting Method 1: Direct Google Lens upload...")
             if self._try_direct_lens_upload(temp_image_path):
+                print("✅ Google Lens search completed - browser will stay open for user to view results")
                 return True
             
             # METHOD 2: Try traditional Google Images flow
             print("🔧 Attempting Method 2: Traditional Google Images...")
             if self._try_google_images_upload(temp_image_path):
+                print("✅ Google Images search completed - browser will stay open for user to view results")
                 return True
             
             # METHOD 3: Last resort - use Google's upload endpoint directly
             print("🔧 Attempting Method 3: Direct upload endpoint...")
             if self._try_direct_upload_endpoint(temp_image_path):
+                print("✅ Direct upload search completed - browser will stay open for user to view results")
                 return True
             
             # All methods failed
@@ -72,7 +75,7 @@ class DirectImageSearchHandler:
             print(f"❌ Direct image search failed: {e}")
             return self._fallback_image_search(pil_image)
         finally:
-            # Cleanup temp file
+            # Cleanup temp file only - DON'T cleanup driver
             if 'temp_image_path' in locals():
                 try:
                     os.unlink(temp_image_path)
@@ -104,6 +107,7 @@ class DirectImageSearchHandler:
                                 print("✅ Found file input, uploading image...")
                                 element.send_keys(image_path)
                                 print("🎉 Image uploaded to Google Lens!")
+                                print("📖 Browser will stay open - close it manually when done")
                                 return True
                         except Exception as e:
                             continue
@@ -123,7 +127,7 @@ class DirectImageSearchHandler:
         try:
             print("🌐 Opening Google Images...")
             self.driver.get("https://images.google.com")
-            time.sleep(3)
+            time.sleep(2)
             
             # Try to find and click the camera icon
             print("📷 Looking for camera icon...")
@@ -136,13 +140,12 @@ class DirectImageSearchHandler:
             
             for selector in camera_selectors:
                 try:
-                    camera_btn = WebDriverWait(self.driver, 5).until(
-                        EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                    )
-                    camera_btn.click()
-                    print("✅ Camera icon clicked!")
-                    time.sleep(2)
-                    break
+                    camera_btn = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if camera_btn.is_displayed() and camera_btn.is_enabled():
+                        camera_btn.click()
+                        print("✅ Camera icon clicked!")
+                        time.sleep(2)
+                        break
                 except:
                     continue
             else:
@@ -152,13 +155,12 @@ class DirectImageSearchHandler:
             # Try to find file input after camera click
             print("📤 Looking for file input after camera click...")
             try:
-                file_input = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='file']"))
-                )
+                file_input = self.driver.find_element(By.CSS_SELECTOR, "input[type='file']")
                 file_input.send_keys(image_path)
                 print("✅ Image uploaded via Google Images!")
+                print("📖 Browser will stay open - close it manually when done")
                 return True
-            except TimeoutException:
+            except:
                 print("❌ File input not found after camera click")
                 return False
                 
@@ -171,17 +173,16 @@ class DirectImageSearchHandler:
         try:
             print("🌐 Using direct upload endpoint...")
             self.driver.get("https://www.google.com/searchbyimage/upload")
-            time.sleep(3)
+            time.sleep(2)
             
             # Look for file input on the upload page
             try:
-                file_input = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='file']"))
-                )
+                file_input = self.driver.find_element(By.CSS_SELECTOR, "input[type='file']")
                 file_input.send_keys(image_path)
                 print("✅ Image uploaded via direct endpoint!")
+                print("📖 Browser will stay open - close it manually when done")
                 return True
-            except TimeoutException:
+            except:
                 print("❌ No file input found on upload page")
                 return False
                 
@@ -217,6 +218,7 @@ class DirectImageSearchHandler:
             self.driver.execute_script(submit_script)
             
             print("✅ Interactive upload completed!")
+            print("📖 Browser will stay open - close it manually when done")
             return True
             
         except Exception as e:
@@ -224,19 +226,20 @@ class DirectImageSearchHandler:
             return False
     
     def _setup_driver(self):
-        """Setup Chrome driver with options"""
+        """Setup Chrome driver with optimized options"""
         try:
             chrome_options = webdriver.ChromeOptions()
             chrome_options.add_argument("--no-sandbox")
             chrome_options.add_argument("--disable-dev-shm-usage")
-            chrome_options.add_argument("--start-maximized")
+            chrome_options.add_argument("--disable-extensions")
+            chrome_options.add_argument("--disable-plugins")
+            chrome_options.add_argument("--disable-gpu")
             chrome_options.add_argument("--disable-blink-features=AutomationControlled")
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option('useAutomationExtension', False)
             
-            # Remove automation detection
-            chrome_options.add_argument("--disable-blink-features")
-            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            # Set page load strategy to 'eager' to load quickly
+            chrome_options.page_load_strategy = 'eager'
             
             self.driver = webdriver.Chrome(
                 service=ChromeService(ChromeDriverManager().install()),
@@ -246,7 +249,9 @@ class DirectImageSearchHandler:
             # Remove webdriver property
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
-            self.driver.implicitly_wait(5)
+            # Set implicit wait to 0 (no waiting)
+            self.driver.implicitly_wait(0)
+            
             return True
             
         except Exception as e:
@@ -279,18 +284,18 @@ class DirectImageSearchHandler:
     def _fallback_image_search(self, pil_image: Image.Image):
         """Fallback method when direct upload fails"""
         try:
-            # Save to desktop for manual upload
-            desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
-            image_path = os.path.join(desktop_path, "search_image.jpg")
+            # Save to temp for manual upload
+            temp_dir = self._get_safe_temp_dir()
+            image_path = os.path.join(temp_dir, "search_image.jpg")
             pil_image.save(image_path, "JPEG", quality=90)
             
-            # Open Google Images with instructions
+            # Open Google Lens with instructions
             webbrowser.open("https://lens.google.com")
             
-            print("📁 Image saved to desktop for manual upload:")
+            print("📁 Image saved for manual upload:")
             print(f"   📍 Location: {image_path}")
             print("   🌐 Google Lens opened - drag and drop the image file")
-            print("   💡 Pro tip: Drag the image file from desktop to Google Lens page")
+            print("   📖 Close the browser manually when done searching")
             
             return True
         except Exception as e:
@@ -300,9 +305,11 @@ class DirectImageSearchHandler:
             return False
     
     def cleanup(self):
-        """Clean up browser driver"""
+        """Clean up browser driver - ONLY called when app exits"""
         if self.driver:
             try:
                 self.driver.quit()
+                self.driver = None
+                print("[INFO] Browser driver cleaned up")
             except:
                 pass
