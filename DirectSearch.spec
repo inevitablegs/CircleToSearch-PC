@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('core', 'core'), ('utils', 'utils'), ('overlay.py', '.')],
+    datas=[('core', 'core'), ('utils', 'utils'), ('overlay.py', '.'), ('assets', 'assets')],
     hiddenimports=['PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtWidgets', 'easyocr', 'selenium', 'webdriver_manager', 'requests', 'urllib3', 'chardet', 'idna'],
     hookspath=[],
     hooksconfig={},
@@ -35,4 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=['assets\\icon.ico'],
 )

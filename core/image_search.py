@@ -69,18 +69,24 @@ class DirectImageSearchHandler:
             
             # All methods failed
             print("❌ All direct upload methods failed, using fallback...")
+            self.temp_files = getattr(self, "temp_files", [])
+            self.temp_files.append(temp_image_path)
             return self._fallback_image_search(pil_image)
+    
+        
                 
         except Exception as e:
             print(f"❌ Direct image search failed: {e}")
             return self._fallback_image_search(pil_image)
-        finally:
-            # Cleanup temp file only - DON'T cleanup driver
-            if 'temp_image_path' in locals():
-                try:
-                    os.unlink(temp_image_path)
-                except:
-                    pass
+        # finally:
+        #     # Cleanup temp file only - DON'T cleanup driver
+        #     if 'temp_image_path' in locals():
+        #         try:
+        #             os.unlink(temp_image_path)
+        #         except:
+        #             pass
+        
+        
     
     def _try_direct_lens_upload(self, image_path):
         """Method 1: Use Google Lens directly (most reliable)"""
@@ -305,7 +311,7 @@ class DirectImageSearchHandler:
             return False
     
     def cleanup(self):
-        """Clean up browser driver - ONLY called when app exits"""
+        """Clean up browser driver and temp images"""
         if self.driver:
             try:
                 self.driver.quit()
@@ -313,3 +319,14 @@ class DirectImageSearchHandler:
                 print("[INFO] Browser driver cleaned up")
             except:
                 pass
+        
+        # Clean temp files at exit
+        if hasattr(self, "temp_files"):
+            for f in self.temp_files:
+                if os.path.exists(f):
+                    try:
+                        os.remove(f)
+                    except:
+                        pass
+            self.temp_files.clear()
+            print("[INFO] Temporary images cleaned up")

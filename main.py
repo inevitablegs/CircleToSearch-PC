@@ -195,7 +195,7 @@ class DirectSearchApplication:
 
 # Follwing code is for develoment phase - inevitablegs
 
-"""         
+        
 def main():
     print("🚀 Starting Direct Search Application (Lazy Load Mode)")
     
@@ -232,4 +232,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-"""
