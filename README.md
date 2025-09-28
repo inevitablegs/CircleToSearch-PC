@@ -307,7 +307,7 @@ We welcome contributions to PyDirect! If you're interested in improving the proj
 7.  **Push your branch** to your forked repository.
 8.  **Open a Pull Request** against the `main` branch of the original PyDirect repository.
 
-Please refer to `CONTRIBUTING.md` (if available) for more detailed guidelines.
+Please refer to [CONTRIBUTING.md](CONTRIBUTING.md) for more detailed guidelines.
 
 ## License
 
